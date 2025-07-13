@@ -1,10 +1,18 @@
 # Kuntur Detector Server
 
-Sistema de detección de amenazas en tiempo real para negocios ecuatorianos.
+Sistema de detección de amenazas para negocios ecuatorianos.
 
 ## Descripción
 
-Kuntur Detector es un servicio que analiza textos recibidos (como mensajes, correos, etc.) para identificar posibles amenazas de extorsión, robo o secuestro, utilizando lenguaje natural procesado por un modelo de IA especializado en reconocer jerga ecuatoriana utilizada en contextos de amenazas.
+Kuntur Detector es un servicio que analiza textos recibidos (como mensajes, correos, etc.) para identificar posibles amenazas de extorsión, robo o secuestro, utilizando lenguaje natural procesado por un modelo de IA utilizada en contextos de amenazas.
+
+## Capturas de Pantalla
+
+### Ejemplo de detección de amenaza
+![Detector de Amenazas - Extorsión](img/kuntur_detector_extor.png)
+
+### Ejemplo de texto no amenazante
+![Detector de Amenazas - No amenaza](img/kuntur_detector_na.png)
 
 ## Características
 
@@ -29,19 +37,35 @@ kuntur_detector_server/
 └── README.md                 # Documentación
 ```
 
-## Instalación
+## 🚀 Instalación y ejecución local
 
-1. Clona este repositorio:
+### 1. Instalar uv (Gestor de entornos para Python si aun no lo tienes)
 
 ```bash
-git clone https://github.com/tu-usuario/kuntur-detector-server.git
-cd kuntur-detector-server
+# En macOS/Linux
+$ curl -LsSf https://astral.sh/uv/install.sh | sh
+# En Windows
+PS> powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Verificar la instalación
+uv --version
 ```
-
-2. Instala las dependencias:
+### 2. Clonar y configurar el proyecto
 
 ```bash
-uv add fastapi uvicorn httpx pydantic pytest python-dotenv
+# Clonar el repositorio
+git clone https://github.com/Snayderstone/kuntur_detector_server.git
+
+# Acceder al repositorio
+cd kuntur-detector-server
+
+# Crear entorno virtual
+uv venv .venv
+
+# Activar entorno virtual
+source .venv/bin/activate
+
+# Instalar dependencias
+uv sync
 ```
 
 3. Configura las variables de entorno:
@@ -59,7 +83,7 @@ DEEPSEEK_API_KEY=tu_api_key_de_deepseek
 Para iniciar el servidor:
 
 ```bash
-python main.py
+uv run main.py
 ```
 
 El servidor estará disponible en `http://localhost:8000`.
@@ -94,6 +118,3 @@ Para ejecutar las pruebas unitarias:
 pytest
 ```
 
-## Licencia
-
-MIT

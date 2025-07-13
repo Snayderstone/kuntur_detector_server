@@ -33,5 +33,8 @@ class Config:
     DEEPSEEK_API_URL: str = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions")
     
     # Mock
-    # Forzamos el uso de la API real si USE_MOCK=false en el .env
-    USE_MOCK: bool = False if os.getenv("USE_MOCK", "").lower() == "false" else (ENV != Environment.PRODUCTION)
+    USE_MOCK: bool = os.getenv("USE_MOCK", "false").lower() == "true"
+    
+    # Sistema de caché
+    USE_CACHE: bool = os.getenv("USE_CACHE", "true").lower() == "true"
+    CACHE_TTL_HOURS: int = int(os.getenv("CACHE_TTL_HOURS", "24"))

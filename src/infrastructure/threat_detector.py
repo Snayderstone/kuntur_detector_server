@@ -2,8 +2,12 @@
 
 import os
 import json
+import time
 import logging
-from typing import Dict, List, Any
+import hashlib
+import asyncio
+import functools
+from typing import Dict, List, Any, Optional, Tuple
 
 import httpx
 from dotenv import load_dotenv
@@ -19,54 +23,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("deepseek_detector")
 
-# Prompt para la detección de amenazas adaptado al contexto ecuatoriano
-THREAT_DETECTION_PROMPT = """
-Eres un sistema experto en seguridad especializado en analizar el CONTEXTO e INTENCIÓN de mensajes para detectar amenazas en Ecuador.
+# Prompt ultra-eficiente para detección de amenazas
+ULTRA_EFFICIENT_PROMPT = """
+Analiza: "{text}"
 
-TAREA: Analiza el siguiente texto y determina si contiene una amenaza implícita o explícita de extorsión, robo o secuestro.
+Identifica: amenazas explícitas/implícitas (extorsión/robo/secuestro) en contexto ecuatoriano.
+Alerta: lenguaje cordial con intención amenazante ("colaboración", "protección", "visita").
 
-CONTEXTO ECUATORIANO:
-Es fundamental que evalúes tanto el lenguaje explícito como la intención oculta. Muchas amenazas utilizan un lenguaje cortés, formal y ambiguo pero con claras intenciones amenazantes. Debes detectar estas amenazas SUTILES.
-
-Ejemplos de amenazas disfrazadas con lenguaje cortés:
-1. "Buenos días vecina, le saluda la banda de los lobos para pedirle una pequeña colaboración" → EXTORSIÓN (solicitud de dinero por una banda criminal bajo apariencia cortés)
-2. "Le vamos a visitar para conversar sobre la seguridad de su negocio" → EXTORSIÓN (implica consecuencias si no se paga)
-3. "Necesitamos que coopere con la causa para evitar problemas" → EXTORSIÓN (implica consecuencias negativas)
-4. "Queremos ofrecerle un servicio de protección para su local" → EXTORSIÓN (cuando viene de grupos criminales)
-5. "Pasaremos a conocer su casa y a su familia" → AMENAZA/INTIMIDACIÓN (implica vigilancia)
-6. "Si no llega a un acuerdo, no podemos garantizar que esté seguro" → EXTORSIÓN
-7. "Solo queremos presentarnos con usted para que nos conozca, somos la gente que trabaja en este sector" → EXTORSIÓN (presentación intimidante)
-8. "Por su seguridad, es mejor que hablemos personalmente sobre un tema de interés mutuo" → AMENAZA VELADA
-
-JERGA ECUATORIANA COMÚN EN AMENAZAS:
-- "vacunas/vacunita" = pagos de extorsión/protección
-- "colaboración/colaborar/aporte/apoyar" = pago forzado
-- "dar el susto" = robo o ataque
-- "llevar pa' la vuelta" = secuestro
-- "tocar la puerta" = amenaza de visita
-- "visitar el local/negocio" = amenaza de daños
-- "hacer limpieza" = amenaza de daño físico
-- "servicio de seguridad" = extorsión
-- "estar pendiente" = vigilancia amenazante
-- "conocer a la familia" = amenaza velada
-- "prevenir problemas/accidentes" = amenaza velada
-- "la gente/los muchachos del sector" = grupo criminal local
-
-ANALIZAR CON ESPECIAL ATENCIÓN:
-- Referencias a grupos/bandas/organizaciones (incluso con nombres que parecen inofensivos)
-- Solicitudes de dinero/pagos/colaboraciones con tono cordial pero intimidante
-- Lenguaje aparentemente amable o formal pero con intenciones amenazantes subyacentes
-- Ofrecimientos de "protección", "seguridad" o "prevención" no solicitados
-- Menciones a conocer detalles personales (familia, dirección, rutinas)
-- Consecuencias implícitas de no cooperar o no aceptar una propuesta
-- Presentaciones de grupos o personas que "controlan" o "trabajan" en la zona
-
-Texto a analizar: "{text}"
-
-FORMATO DE RESPUESTA:
+Formato exacto:
 Tipo: <extorsión/robo/secuestro/ninguna>
-Palabra clave: <palabra o frase clave que indica la amenaza>
-Justificación: <Explicación detallada de por qué es una amenaza, basada tanto en palabras específicas como en el contexto y la intención percibida. Si es una amenaza disfrazada con lenguaje cortés, explica cómo se identifica la intención real detrás de las palabras utilizadas>
+Palabra: <término clave>
+Por qué: <explicación concisa>
 """
 
 class DeepSeekThreatDetector(ThreatDetectorPort):
@@ -80,6 +47,14 @@ class DeepSeekThreatDetector(ThreatDetectorPort):
         """
         self._api_key = api_key or Config.DEEPSEEK_API_KEY or "sk-bbf05858555647b28e9f0b65d6e19896"
         self._api_url = Config.DEEPSEEK_API_URL
+        self._cache = {}
+        self._cache_ttl = Config.CACHE_TTL_HOURS * 60 * 60  # Convertir horas a segundos
+        self._use_cache = Config.USE_CACHE
+        
+    def _generate_cache_key(self, text: str) -> str:
+        """Genera una clave de caché para el texto usando un hash MD5."""
+        text_hash = hashlib.md5(text.encode()).hexdigest()
+        return f"threat_detector:{text_hash}"
         
     async def analyze_text(self, text: str) -> ThreatAnalysis:
         """Analiza un texto y determina si contiene amenazas utilizando DeepSeek.
@@ -91,14 +66,38 @@ class DeepSeekThreatDetector(ThreatDetectorPort):
             El análisis de la amenaza
         """
         logger.info(f"Analizando texto: {text[:50]}...")
-        prompt = THREAT_DETECTION_PROMPT.format(text=text)
-        logger.debug(f"Prompt generado: {prompt[:100]}...")
+        
+        # Verificar caché si está habilitada
+        if self._use_cache:
+            text_hash = hashlib.md5(text.encode()).hexdigest()
+            logger.debug(f"Verificando caché para texto (hash: {text_hash})")
+            cache_key = self._generate_cache_key(text)
+            logger.debug(f"Generando clave de caché: {cache_key}")
+            
+            # Verificar si hay resultado en caché y no ha expirado
+            if cache_key in self._cache:
+                cached_result, timestamp = self._cache[cache_key]
+                current_time = time.time()
+                
+                if current_time - timestamp < self._cache_ttl:
+                    logger.info("Resultado encontrado en caché!")
+                    return cached_result
+                else:
+                    # Eliminar entrada expirada
+                    del self._cache[cache_key]
+                    logger.debug("Caché expirada, consultando API")
+            else:
+                logger.info("Caché no encontrada, consultando API")
+        else:
+            logger.debug("Verificando caché para texto (caché desactivada)")
+        
+        # Si no hay caché o está desactivada, hacer llamada a la API
+        prompt = ULTRA_EFFICIENT_PROMPT.format(text=text)
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 try:
                     # Preparar la solicitud
-                    # Configurar la solicitud según documentación de la API de DeepSeek
                     headers = {
                         "Authorization": f"Bearer {self._api_key}",
                         "Content-Type": "application/json"
@@ -113,8 +112,6 @@ class DeepSeekThreatDetector(ThreatDetectorPort):
                     }
                     
                     logger.info(f"Conectando a DeepSeek API URL: {self._api_url}")
-                    logger.debug(f"Headers de autorización configurados")
-                    logger.debug(f"Request data: {json.dumps(request_data)}")
                     
                     response = await client.post(
                         self._api_url,
@@ -137,22 +134,21 @@ class DeepSeekThreatDetector(ThreatDetectorPort):
                     
                     response_data = response.json()
                     logger.info("Respuesta JSON recibida correctamente")
-                    logger.debug(f"Respuesta completa: {json.dumps(response_data)}")
+                    logger.debug(f"Procesando respuesta: {json.dumps(response_data)}")
                     
                     # Procesar la respuesta
                     raw_result = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    logger.info(f"Respuesta raw del modelo: {raw_result}")
                     
                     # Extraer tipo, palabra clave y justificación de la respuesta
                     threat_type_line = next((line for line in raw_result.split("\n") 
                                     if line.startswith("Tipo:") or line.lower().startswith("tipo:")), "Tipo: ninguna")
                     keyword_line = next((line for line in raw_result.split("\n") 
-                                    if line.startswith("Palabra clave:") or line.lower().startswith("palabra clave:")), 
-                                    "Palabra clave: ninguna")
+                                    if line.startswith("Palabra:") or line.lower().startswith("palabra:")), 
+                                    "Palabra: ninguna")
                     justification_line = next((line for line in raw_result.split("\n") 
-                                    if line.startswith("Justificación:") or line.lower().startswith("justificacion:") 
-                                    or line.lower().startswith("justificación:")), 
-                                    "Justificación: No se proporcionó justificación.")
+                                    if line.startswith("Por qué:") or line.lower().startswith("por que:") 
+                                    or line.lower().startswith("por qué:")), 
+                                    "Por qué: No se proporcionó justificación.")
                     
                     # Extraer valores
                     threat_type_str = threat_type_line.split(":", 1)[1].strip().lower()
@@ -177,13 +173,22 @@ class DeepSeekThreatDetector(ThreatDetectorPort):
                     is_threat = "SI" if threat_type != ThreatType.NINGUNA else "NO"
                     logger.info(f"Decisión final: {is_threat}, tipo: {threat_type}")
                     
-                    return ThreatAnalysis(
+                    # Crear objeto de análisis de amenaza
+                    threat_analysis = ThreatAnalysis(
                         keyword=keyword,
                         threat_type=threat_type,
                         is_threat=is_threat,
                         justification=justification
                     )
                     
+                    # Guardar en caché si está habilitada
+                    if self._use_cache:
+                        cache_key = self._generate_cache_key(text)
+                        self._cache[cache_key] = (threat_analysis, time.time())
+                        logger.debug(f"Guardando resultado en caché con clave: {cache_key}")
+                    
+                    return threat_analysis
+                
                 except Exception as e:
                     logger.exception(f"Error al comunicarse con la API de DeepSeek: {str(e)}")
                     # Fallback a una respuesta predeterminada en caso de error
@@ -201,35 +206,4 @@ class DeepSeekThreatDetector(ThreatDetectorPort):
                 threat_type=ThreatType.NINGUNA,
                 is_threat="NO",
                 justification="Ocurrió un error general al procesar la solicitud."
-            )
-            raw_result = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            
-            # Extraer tipo y palabra clave de la respuesta
-            threat_type_line = next((line for line in raw_result.split("\n") 
-                              if line.startswith("Tipo:") or line.lower().startswith("tipo:")), "Tipo: ninguna")
-            keyword_line = next((line for line in raw_result.split("\n") 
-                              if line.startswith("Palabra clave:") or line.lower().startswith("palabra clave:")), 
-                              "Palabra clave: ninguna")
-            
-            # Extraer valores
-            threat_type_str = threat_type_line.split(":", 1)[1].strip().lower()
-            keyword = keyword_line.split(":", 1)[1].strip()
-            
-            # Mapear a ThreatType
-            if "extorsión" in threat_type_str or "extorsion" in threat_type_str:
-                threat_type = ThreatType.EXTORSION
-            elif "robo" in threat_type_str:
-                threat_type = ThreatType.ROBO
-            elif "secuestro" in threat_type_str:
-                threat_type = ThreatType.SECUESTRO
-            else:
-                threat_type = ThreatType.NINGUNA
-            
-            # Determinar si es una amenaza
-            is_threat = "SI" if threat_type != ThreatType.NINGUNA else "NO"
-            
-            return ThreatAnalysis(
-                keyword=keyword,
-                threat_type=threat_type,
-                is_threat=is_threat
             )

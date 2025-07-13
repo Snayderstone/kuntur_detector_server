@@ -175,6 +175,7 @@
     <div class="container">
         <h1>Kuntur Detector</h1>
         <p>Ingresa el texto recibido para analizar si contiene una posible amenaza para tu negocio.</p>
+        <p id="server-status" style="text-align: center; font-size: 0.9em; color: #666;">Verificando estado del servidor...</p>
         
         <div class="form-group">
             <label for="text">Texto a analizar:</label>
@@ -215,9 +216,38 @@
         const keywordSpan = document.getElementById('keyword');
         const threatTypeSpan = document.getElementById('threat-type');
         const justificationSpan = document.getElementById('justification');
+        const serverStatusElem = document.getElementById('server-status');
         
         // URL base de la API - cambiar según donde se despliegue
-        const API_URL = 'http://localhost:8000';
+        const API_URL = 'http://localhost:8080';
+        
+        // Verificar estado del servidor
+        async function checkServerStatus() {
+            try {
+                const response = await fetch(`${API_URL}/health`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
+                
+                if (response.ok) {
+                    serverStatusElem.textContent = "✅ Servidor conectado y funcionando";
+                    serverStatusElem.style.color = "#2a75e6";
+                    analyzeBtn.disabled = false;
+                } else {
+                    serverStatusElem.textContent = "⚠️ Servidor no responde correctamente";
+                    serverStatusElem.style.color = "#ff6b6b";
+                    analyzeBtn.disabled = true;
+                }
+            } catch (error) {
+                console.error("Error al verificar el servidor:", error);
+                serverStatusElem.textContent = `❌ No se puede conectar al servidor (${API_URL})`;
+                serverStatusElem.style.color = "#ff6b6b";
+                analyzeBtn.disabled = true;
+            }
+        }
+        
+        // Verificar el servidor al cargar la página
+        checkServerStatus();
         
         analyzeBtn.addEventListener('click', async () => {
             const text = textArea.value.trim();
@@ -233,6 +263,7 @@
             analyzeBtn.disabled = true;
             
             try {
+                console.log(`Enviando solicitud a: ${API_URL}/analysis`);
                 const response = await fetch(`${API_URL}/analysis`, {
                     method: 'POST',
                     headers: {
@@ -242,7 +273,9 @@
                 });
                 
                 if (!response.ok) {
-                    throw new Error('Error al conectar con el servidor');
+                    const errorMessage = `Error del servidor: ${response.status} ${response.statusText}`;
+                    console.error(errorMessage);
+                    throw new Error(errorMessage);
                 }
                 
                 const data = await response.json();
@@ -264,8 +297,8 @@
                 resultDiv.style.display = 'block';
                 
             } catch (error) {
-                alert(`Error: ${error.message}`);
-                console.error(error);
+                console.error('Error completo:', error);
+                alert(`Error: ${error.message}\nVerifique que el servidor esté ejecutándose en ${API_URL}`);
             } finally {
                 loadingDiv.style.display = 'none';
                 analyzeBtn.disabled = false;

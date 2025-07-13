@@ -1,0 +1,35 @@
+# Entornos virtuales
+venv/
+env/
+.env
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Directorios de pruebas y cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Directorios de git
+.git/
+.github/
+.gitignore
+
+# Directorios de VS Code
+.vscode/
+
+# Archivos de Docker
+Dockerfile
+.dockerignore
+
+# Otros archivos
+.DS_Store
+*.log
